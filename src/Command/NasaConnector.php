@@ -76,7 +76,12 @@ class NasaConnector extends Command
             $this->fileSystem->remove($baseFolder . "/nasaImages/" . $date);
             $output->writeln('Date Folder removed');
         }
-//        $output->writeln('current date is ' . $date);
+
+        $client = new \GuzzleHttp\Client();
+        $response = $client->request('GET', 'https://api.publicapis.org/entries');
+        $body = $response->getBody()->getContents();
+        $comeon = json_decode($body);
+        $output->writeln($response);
 
         return Command::SUCCESS;
     }
