@@ -2,14 +2,14 @@
 
 namespace App\Command;
 
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Filesystem\Filesystem;
-
-//use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
 
 #[AsCommand(
     name: 'app:nasa-connect',
@@ -18,11 +18,24 @@ use Symfony\Component\Filesystem\Filesystem;
 )]
 class NasaConnector extends Command
 {
-
-
+    /**
+     * @var Filesystem
+     */
     private Filesystem $fileSystem;
-    private \GuzzleHttp\Client $client;
+
+    /**
+     * @var Client
+     */
+    private Client $client;
+
+    /**
+     * @var string
+     */
     private string $apiKey = 'p960B4skMQHGdPnetw2KYFVzzoomz4GV5oZMZjUM';
+
+    /**
+     * @var array[]
+     */
     private array $params;
 
     public function __construct()
@@ -33,7 +46,7 @@ class NasaConnector extends Command
                 'api_key' => $this->apiKey
             ]
         ];
-        $this->client = new \GuzzleHttp\Client(['base_uri' => 'https://api.nasa.gov']);
+        $this->client = new Client(['base_uri' => 'https://api.nasa.gov']);
         $this->fileSystem = new Filesystem();
     }
 
@@ -56,16 +69,8 @@ class NasaConnector extends Command
         //get date from arguments or find the last date through the nasa api
         $date = $input->getArgument('date') ? $input->getArgument('date') : $this->getLatestDate();
         $targetFolder = $input->getArgument('target_folder');
-        $text = 'Target folder is ' . $input->getArgument('target_folder');
-        $output->writeln([
-            'Nasa Connector',
-            '============',
-            '',
-            $text,
-        ]);
+        $baseFolder = getcwd() . "/public/" . $targetFolder;
 
-        $current_dir_path = getcwd();
-        $baseFolder = $current_dir_path . "/public/" . $targetFolder;
         $output->writeln([
             'writing to folder:',
             $baseFolder,
@@ -91,10 +96,11 @@ class NasaConnector extends Command
             $output->writeln('Date Folder removed and re-added');
         }
 
+        //get images metadata for the given date
         $dailyData = $this->getDailyData($date);
-        $bla = $this->getImagesFromDate($dailyData,$dateFolder,$date);
 
-
+        // Save all images from the given date in the specified folder
+        $this->getImagesFromDate($dailyData, $dateFolder, $date);
 
         return Command::SUCCESS;
     }
@@ -107,7 +113,13 @@ class NasaConnector extends Command
     public function getDailyData($date)
     {
 
-        $request = $this->client->get('/EPIC/api/natural/date/' . $date, $this->params);
+        try {
+            $request = $this->client->get('/EPIC/api/natural/date/' . $date, $this->params);
+        } catch (RequestException $e) {
+            echo 'error importing daily data: ' . $e->getMessage();
+            return [];
+        }
+
 
         return json_decode($request->getBody());
     }
@@ -119,9 +131,13 @@ class NasaConnector extends Command
      */
     private function getLatestDate(): string
     {
-        $request = $this->client->get('/EPIC/api/natural/all', $this->params);
+        try {
+            $request = $this->client->get('/EPIC/api/natural/all', $this->params);
+        } catch (RequestException $e) {
+            echo $e;
+        }
         $result = json_decode($request->getBody());
-        return $result[0]->date;
+        return $result[0]->date; //return the first result since this array is sorted by date
     }
 
     /**
@@ -129,20 +145,27 @@ class NasaConnector extends Command
      * @param string $date
      * @return void
      */
-    private function getImagesFromDate(mixed $dailyData,string $folder,string $date)
+    private function getImagesFromDate(mixed $dailyData, string $folder, string $date)
     {
         //reformat date for the use of the api
-        $year = substr($date,0,4);
-        $month = substr($date,5,2);
+        $year = substr($date, 0, 4);
+        $month = substr($date, 5, 2);
         $day = substr($date, -2);
 
+        //base api url
         $baseUrl = 'https://epic.gsfc.nasa.gov/archive/natural/' . $year . '/' . $month . '/' . $day . '/png/';
+
+        //for each image save a png copy locally
         foreach ($dailyData as $image) {
-            $imageName = $image->image . '.png';
-            $imageURL = $baseUrl . $imageName;
-            copy($imageURL, $folder . '/' . $imageName);
-            echo 'download image' . $imageName . "\n";
+            try {
+                $imageName = $image->image . '.png';
+                $imageURL = $baseUrl . $imageName;
+                copy($imageURL, $folder . '/' . $imageName);
+                echo 'download image' . $imageName . "\n";
+            } catch (RequestException $e) {
+                echo $e;
+            }
+
         }
     }
-
 }
