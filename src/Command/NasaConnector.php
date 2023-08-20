@@ -8,7 +8,8 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Filesystem\Filesystem;
-use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
+
+//use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
 
 #[AsCommand(
     name: 'app:nasa-connect',
@@ -17,25 +18,44 @@ use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
 )]
 class NasaConnector extends Command
 {
-    private $fileSystem;
+
+
+    private Filesystem $fileSystem;
+    private \GuzzleHttp\Client $client;
+    private string $apiKey = 'p960B4skMQHGdPnetw2KYFVzzoomz4GV5oZMZjUM';
+    private array $params;
 
     public function __construct()
     {
         parent::__construct();
+        $this->params = [
+            'query' => [
+                'api_key' => $this->apiKey
+            ]
+        ];
+        $this->client = new \GuzzleHttp\Client(['base_uri' => 'https://api.nasa.gov']);
         $this->fileSystem = new Filesystem();
     }
 
     protected function configure(): void
     {
         $this
-            // ...
             ->addArgument('target_folder', InputArgument::REQUIRED, 'Where would you like to save the data?')
             ->addArgument('date', InputArgument::OPTIONAL, 'Which date?');
     }
 
+    /**
+     * execute command
+     * @param InputInterface $input
+     * @param OutputInterface $output
+     * @return int
+     * @throws \GuzzleHttp\Exception\GuzzleException
+     */
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $date = $input->getArgument('date')?$input->getArgument('date'):'default';
+        //get date from arguments or find the last date through the nasa api
+        $date = $input->getArgument('date') ? $input->getArgument('date') : $this->getLatestDate();
+        $targetFolder = $input->getArgument('target_folder');
         $text = 'Target folder is ' . $input->getArgument('target_folder');
         $output->writeln([
             'Nasa Connector',
@@ -44,47 +64,85 @@ class NasaConnector extends Command
             $text,
         ]);
 
-//        $fsObject = new Filesystem();
         $current_dir_path = getcwd();
-        $baseFolder = $current_dir_path . "/public";
+        $baseFolder = $current_dir_path . "/public/" . $targetFolder;
         $output->writeln([
-            'base path:',
+            'writing to folder:',
             $baseFolder,
         ]);
-        $output->writeln([
-            $this->fileSystem->exists($baseFolder . "/nasaImages"),
-            $baseFolder . "/nasaImages"
-        ]);
 
-        //create base directory
-        if (!$this->fileSystem->exists($baseFolder . "/nasaImages")) {
-            $output->writeln('nasaImages folder does not exist! creating one for you...');
-            $this->fileSystem->mkdir($baseFolder . "/nasaImages");
-            $output->writeln('base Folder created');
-        } else {
-            $output->writeln('base Folder already exists');
+        //create target directory if it is not already there
+        if (!$this->fileSystem->exists($baseFolder)) {
+            $output->writeln('target folder does not exist! creating one for you...');
+            $this->fileSystem->mkdir($baseFolder);
         }
+
+        //create date folder. if it exists, remove it and create it again (for testing purposes)
         $output->writeln(['Creating new date specific folder, if one does not exist']);
-        if (!$this->fileSystem->exists($baseFolder . "/nasaImages/" . $date)) {
+        $dateFolder = $baseFolder . "/" . $date;
+        if (!$this->fileSystem->exists($dateFolder)) {
             $output->writeln('Date folder does not exist! creating one for you...');
-            $this->fileSystem->mkdir($baseFolder . "/nasaImages/" . $date);
+            $this->fileSystem->mkdir($dateFolder);
             $output->writeln('Date Folder created');
+        } else {
+            $output->writeln('Date Folder already exists');
+            $this->fileSystem->remove($dateFolder);
+            $this->fileSystem->mkdir($dateFolder);
+            $output->writeln('Date Folder removed and re-added');
         }
-        else { // if date folder exists, remove it for now
 
-            $output->writeln('Date Folder exists deleting it');
-            $this->fileSystem->remove($baseFolder . "/nasaImages/" . $date);
-            $output->writeln('Date Folder removed');
-        }
+        $dailyData = $this->getDailyData($date);
+        $bla = $this->getImagesFromDate($dailyData,$dateFolder,$date);
 
-        $client = new \GuzzleHttp\Client();
-        $response = $client->request('GET', 'https://api.publicapis.org/entries');
-        $body = $response->getBody()->getContents();
-        $comeon = json_decode($body);
-        $output->writeln($response);
+
 
         return Command::SUCCESS;
     }
 
+    /**
+     * get metadata for images for given date
+     * @return mixed
+     * @throws \GuzzleHttp\Exception\GuzzleException
+     */
+    public function getDailyData($date)
+    {
+
+        $request = $this->client->get('/EPIC/api/natural/date/' . $date, $this->params);
+
+        return json_decode($request->getBody());
+    }
+
+    /**
+     * find the latest date available
+     * @return string
+     * @throws \GuzzleHttp\Exception\GuzzleException
+     */
+    private function getLatestDate(): string
+    {
+        $request = $this->client->get('/EPIC/api/natural/all', $this->params);
+        $result = json_decode($request->getBody());
+        return $result[0]->date;
+    }
+
+    /**
+     * save all images from a given date
+     * @param string $date
+     * @return void
+     */
+    private function getImagesFromDate(mixed $dailyData,string $folder,string $date)
+    {
+        //reformat date for the use of the api
+        $year = substr($date,0,4);
+        $month = substr($date,5,2);
+        $day = substr($date, -2);
+
+        $baseUrl = 'https://epic.gsfc.nasa.gov/archive/natural/' . $year . '/' . $month . '/' . $day . '/png/';
+        foreach ($dailyData as $image) {
+            $imageName = $image->image . '.png';
+            $imageURL = $baseUrl . $imageName;
+            copy($imageURL, $folder . '/' . $imageName);
+            echo 'download image' . $imageName . "\n";
+        }
+    }
 
 }
