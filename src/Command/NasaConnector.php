@@ -112,15 +112,12 @@ class NasaConnector extends Command
      */
     public function getDailyData($date)
     {
-
         try {
             $request = $this->client->get('/EPIC/api/natural/date/' . $date, $this->params);
         } catch (RequestException $e) {
             echo 'error importing daily data: ' . $e->getMessage();
             return [];
         }
-
-
         return json_decode($request->getBody());
     }
 
@@ -165,7 +162,6 @@ class NasaConnector extends Command
             } catch (RequestException $e) {
                 echo $e;
             }
-
         }
     }
 }
